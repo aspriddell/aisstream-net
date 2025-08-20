@@ -23,6 +23,8 @@ public partial class AISEventReceiver : IDisposable
     private ClientWebSocket? _webSocket;
     private CancellationTokenSource? _readTaskCancellation;
 
+    private AISSubscriptionRequest? _lastSubscriptionRequest;
+    
     private bool _disposed;
 
     /// <summary>
@@ -55,7 +57,7 @@ public partial class AISEventReceiver : IDisposable
     public bool IncludeUnsupportedEvents { get; set; }
 
     /// <summary>
-    /// Begin a connection to the aisstream service with the given subscription request.
+    /// Begin a connection to the AISStream service with the given subscription request.
     /// If a connection is already active this will send the new <see cref="request"/>, replacing the previous one.
     /// </summary>
     /// <param name="request">The subscription request information</param>
@@ -64,8 +66,6 @@ public partial class AISEventReceiver : IDisposable
     public Task ConnectAsync(AISSubscriptionRequest request, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        // todo handle caching request for reconnections
         return InternalConnectAsync(request, cancellationToken);
     }
 
@@ -109,14 +109,21 @@ public partial class AISEventReceiver : IDisposable
             _readTaskCancellation?.Dispose();
             _readTaskCancellation = new CancellationTokenSource();
 
-            _readTask?.Dispose();
-            _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
+            // start read task if one is not already running (as sometimes the read loop will invoke a reconnection)
+            if (_readTask?.Status != TaskStatus.Running)
+            {
+                _readTask?.Dispose();
+                _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
+            }
         }
 
         var req = AISAuthenticatedSubscriptionRequest.CreateAuthenticatedRequest(request, _apiKey);
         var serializedRequest = JsonSerializer.SerializeToUtf8Bytes(req, SerializerContext.Default.AISAuthenticatedSubscriptionRequest);
 
         await _webSocket.SendAsync(serializedRequest, WebSocketMessageType.Binary, WebSocketMessageFlags.EndOfMessage, cancellationToken);
+
+        // store for reconnection purposes later on
+        _lastSubscriptionRequest = req;
     }
 
     private async Task AsyncMessageLoop(ClientWebSocket socket, CancellationToken cancellation)
@@ -134,11 +141,21 @@ public partial class AISEventReceiver : IDisposable
                 {
                     result = await socket.ReceiveAsync(buffer.AsMemory(), cancellation);
                 }
-                catch (WebSocketException)
+                catch (WebSocketException e)
                 {
-                    // for now, shut down the channel todo log socket error and try to reconnect
-                    _messagePipeline.Writer.Complete();
-                    break;
+                    // rethrow for any non-transient errors we can't resolve by reconnecting
+                    if (e.WebSocketErrorCode is WebSocketError.HeaderError or WebSocketError.InvalidMessageType or WebSocketError.NotAWebSocket or WebSocketError.UnsupportedProtocol or WebSocketError.UnsupportedVersion)
+                    {
+                        throw;
+                    }
+
+                    if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
+                    {
+                        await InternalConnectAsync(_lastSubscriptionRequest, cancellation);
+                        continue;
+                    }
+
+                    return;
                 }
                 catch (OperationCanceledException)
                 {
@@ -148,6 +165,14 @@ public partial class AISEventReceiver : IDisposable
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+
+                    // user didn't ask for a disconnect, try reconnecting (and reuse this task)
+                    if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
+                    {
+                        await InternalConnectAsync(_lastSubscriptionRequest, cancellation);
+                        continue;
+                    }
+
                     break;
                 }
 
