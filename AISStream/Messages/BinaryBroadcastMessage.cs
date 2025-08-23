@@ -14,5 +14,5 @@ public class BinaryBroadcastMessage : AISMessage
     public ApplicationId ApplicationId { get; set; } = null!;
 
     [JsonPropertyName("BinaryData")]
-    public string BinaryData { get; set; }
+    public string BinaryData { get; set; } = null!;
 }
