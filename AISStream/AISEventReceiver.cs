@@ -1,10 +1,12 @@
-﻿// AISStream.NET - a high-performance aisstream.io client library for .NET
+// AISStream.NET - a high-performance aisstream.io client library for .NET
 // Licensed under Apache-2.0 - see the license file for more information
 
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 
 namespace AISStream;
 
@@ -16,6 +18,7 @@ public partial class AISEventReceiver : IDisposable
     private static readonly Uri WebsocketUrl = new("wss://stream.aisstream.io/v0/stream");
 
     private readonly string _apiKey;
+    private readonly ILogger? _logger;
     private readonly HttpMessageInvoker _invoker;
     private readonly Channel<AISEvent> _messagePipeline;
 
@@ -24,7 +27,7 @@ public partial class AISEventReceiver : IDisposable
     private CancellationTokenSource? _readTaskCancellation;
 
     private AISSubscriptionRequest? _lastSubscriptionRequest;
-    
+
     private bool _disposed;
 
     /// <summary>
@@ -34,11 +37,13 @@ public partial class AISEventReceiver : IDisposable
     /// <param name="options">(optional) configuration for the <see cref="Channel"/> used to publish updates to</param>
     /// <param name="handler">(optional) custom <see cref="HttpMessageHandler"/> to use with the websocket</param>
     /// <param name="disposeHandler">(optional) if <see cref="handler"/> is set, whether to call <see cref="HttpMessageHandler.Dispose"/> when the current instance is disposed.</param>
-    public AISEventReceiver(string apiKey, UnboundedChannelOptions? options = null, HttpMessageHandler? handler = null, bool disposeHandler = true)
+    /// <param name="logger">(optional) logger to receive diagnostic messages</param>
+    public AISEventReceiver(string apiKey, UnboundedChannelOptions? options = null, HttpMessageHandler? handler = null, bool disposeHandler = true, ILogger logger = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey, nameof(apiKey));
 
         _apiKey = apiKey;
+        _logger = logger;
         _invoker = handler != null ? new HttpMessageInvoker(handler, disposeHandler) : new HttpMessageInvoker(new SocketsHttpHandler());
         _messagePipeline = Channel.CreateUnbounded<AISEvent>(options ?? new UnboundedChannelOptions
         {
@@ -103,6 +108,7 @@ public partial class AISEventReceiver : IDisposable
 
         if (_webSocket.State != WebSocketState.Open)
         {
+            _logger?.LogDebug("Performing websocket connection to {Url}", WebsocketUrl);
             await _webSocket.ConnectAsync(WebsocketUrl, _invoker, cancellationToken);
 
             _readTaskCancellation?.Cancel();
@@ -112,6 +118,8 @@ public partial class AISEventReceiver : IDisposable
             // start read task if one is not already running (as sometimes the read loop will invoke a reconnection)
             if (_readTask?.Status != TaskStatus.Running)
             {
+                _logger.LogDebug("Starting websocket read loop");
+            
                 _readTask?.Dispose();
                 _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
             }
@@ -121,6 +129,7 @@ public partial class AISEventReceiver : IDisposable
         var serializedRequest = JsonSerializer.SerializeToUtf8Bytes(req, SerializerContext.Default.AISAuthenticatedSubscriptionRequest);
 
         await _webSocket.SendAsync(serializedRequest, WebSocketMessageType.Binary, WebSocketMessageFlags.EndOfMessage, cancellationToken);
+        _logger?.LogInformation("Subscription request sent successfully.");
 
         // store for reconnection purposes later on
         _lastSubscriptionRequest = req;
@@ -143,14 +152,20 @@ public partial class AISEventReceiver : IDisposable
                 }
                 catch (WebSocketException e)
                 {
+                    _logger?.LogDebug(e, "WebSocketException in read loop: {Message}", e.Message);
+
                     // rethrow for any non-transient errors we can't resolve by reconnecting
-                    if (e.WebSocketErrorCode is WebSocketError.HeaderError or WebSocketError.InvalidMessageType or WebSocketError.NotAWebSocket or WebSocketError.UnsupportedProtocol or WebSocketError.UnsupportedVersion)
+                    if (e.WebSocketErrorCode is WebSocketError.HeaderError or WebSocketError.InvalidMessageType
+                        or WebSocketError.NotAWebSocket or WebSocketError.UnsupportedProtocol
+                        or WebSocketError.UnsupportedVersion)
                     {
+                        _logger?.LogError(e, "Non-recoverable WebSocketException in read loop: {Message}", e.Message);
                         throw;
                     }
 
                     if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
                     {
+                        _logger?.LogDebug("Attempting to reconnect after WebSocketException");
                         await InternalConnectAsync(_lastSubscriptionRequest, cancellation);
                         continue;
                     }
@@ -161,6 +176,11 @@ public partial class AISEventReceiver : IDisposable
                 {
                     break;
                 }
+                catch (Exception e)
+                {
+                    _logger?.LogCritical(e, "Unexpected exception in read loop: {Message}", e.Message);
+                    throw;
+                }
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
@@ -169,20 +189,31 @@ public partial class AISEventReceiver : IDisposable
                     // user didn't ask for a disconnect, try reconnecting (and reuse this task)
                     if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
                     {
+                        _logger?.LogDebug("WebSocket closed by remote, attempting to reconnect");
                         await InternalConnectAsync(_lastSubscriptionRequest, cancellation);
+
                         continue;
                     }
 
+                    _logger?.LogDebug("WebSocket closed by remote, unable to perform a reconnection");
                     break;
                 }
 
                 // non-segmented messages that fit in the buffer
                 if (result.EndOfMessage && messageAccumulator == null)
                 {
-                    var message = JsonSerializer.Deserialize(buffer.AsSpan(0, result.Count), SerializerContext.Default.AISEvent);
-                    if (message != null && (message.IsSupported || IncludeUnsupportedEvents))
+                    try
                     {
-                        await _messagePipeline.Writer.WriteAsync(message, CancellationToken.None);
+                        var message = JsonSerializer.Deserialize(buffer.AsSpan(0, result.Count), SerializerContext.Default.AISEvent);
+                        if (message != null && (message.IsSupported || IncludeUnsupportedEvents))
+                        {
+                            await _messagePipeline.Writer.WriteAsync(message, CancellationToken.None);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        _logger?.LogError(e, "Failed to deserialize incoming message: {Message}", e.Message);
+                        _logger?.LogDebug("Message content: {Content}", Encoding.UTF8.GetString(buffer.AsSpan(0, result.Count)));
                     }
 
                     continue;
@@ -202,11 +233,21 @@ public partial class AISEventReceiver : IDisposable
                 {
                     messageAccumulator.Seek(0, SeekOrigin.Begin);
 
-                    var message = JsonSerializer.Deserialize(messageAccumulator, SerializerContext.Default.AISEvent);
-                    if (message != null && (message.IsSupported || IncludeUnsupportedEvents))
+                    try
                     {
-                        await _messagePipeline.Writer.WriteAsync(message, CancellationToken.None);
+                        var message =
+                            JsonSerializer.Deserialize(messageAccumulator, SerializerContext.Default.AISEvent);
+                        if (message != null && (message.IsSupported || IncludeUnsupportedEvents))
+                        {
+                            await _messagePipeline.Writer.WriteAsync(message, CancellationToken.None);
+                        }
                     }
+                    catch (Exception e)
+                    {
+                        _logger?.LogError(e, "Failed to deserialize incoming message: {Message}", e.Message);
+                        _logger?.LogDebug("Message content: {Content}", Encoding.UTF8.GetString(messageAccumulator.ToArray()));
+                    }
+                
 
                     messageAccumulator.Dispose();
                     messageAccumulator = null;
