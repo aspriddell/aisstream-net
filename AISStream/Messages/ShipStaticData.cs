@@ -9,19 +9,26 @@ namespace AISStream.Messages;
 
 public class ShipStaticData : AISMessage
 {
-    [JsonPropertyName("AisVersion")] public int AISVersion { get; set; }
+    [JsonPropertyName("AisVersion")]
+    public int AISVersion { get; set; }
 
-    [JsonPropertyName("ImoNumber")] public int IMONumber { get; set; }
+    [JsonPropertyName("ImoNumber")]
+    public int IMONumber { get; set; }
 
-    [JsonPropertyName("CallSign")] public string CallSign { get; set; } = null!;
+    [JsonPropertyName("CallSign")]
+    public string CallSign { get; set; } = null!;
 
-    [JsonPropertyName("Name")] public string Name { get; set; } = null!;
+    [JsonPropertyName("Name")]
+    public string Name { get; set; } = null!;
 
-    [JsonPropertyName("Type")] public int ShipAndCargoType { get; set; }
+    [JsonPropertyName("Type")]
+    public int ShipAndCargoType { get; set; }
 
-    [JsonPropertyName("Dimension")] public ShipDimensions Dimension { get; set; } = null!;
+    [JsonPropertyName("Dimension")]
+    public ShipDimensions Dimension { get; set; } = null!;
 
-    [JsonPropertyName("FixType")] public PositionFixingDeviceType PositionFixingType { get; set; }
+    [JsonPropertyName("FixType")]
+    public PositionFixingDeviceType PositionFixingType { get; set; }
 
     [JsonPropertyName("Eta")]
     public ShipStaticDataEta ETA { get; set; } = null!;

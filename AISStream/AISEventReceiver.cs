@@ -118,8 +118,8 @@ public partial class AISEventReceiver : IDisposable
             // start read task if one is not already running (as sometimes the read loop will invoke a reconnection)
             if (_readTask?.Status != TaskStatus.Running)
             {
-                _logger.LogDebug("Starting websocket read loop");
-            
+                _logger?.LogDebug("Starting websocket read loop");
+
                 _readTask?.Dispose();
                 _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
             }
@@ -155,9 +155,7 @@ public partial class AISEventReceiver : IDisposable
                     _logger?.LogDebug(e, "WebSocketException in read loop: {Message}", e.Message);
 
                     // rethrow for any non-transient errors we can't resolve by reconnecting
-                    if (e.WebSocketErrorCode is WebSocketError.HeaderError or WebSocketError.InvalidMessageType
-                        or WebSocketError.NotAWebSocket or WebSocketError.UnsupportedProtocol
-                        or WebSocketError.UnsupportedVersion)
+                    if (e.WebSocketErrorCode is WebSocketError.HeaderError or WebSocketError.InvalidMessageType or WebSocketError.NotAWebSocket or WebSocketError.UnsupportedProtocol or WebSocketError.UnsupportedVersion)
                     {
                         _logger?.LogError(e, "Non-recoverable WebSocketException in read loop: {Message}", e.Message);
                         throw;
@@ -235,8 +233,7 @@ public partial class AISEventReceiver : IDisposable
 
                     try
                     {
-                        var message =
-                            JsonSerializer.Deserialize(messageAccumulator, SerializerContext.Default.AISEvent);
+                        var message = JsonSerializer.Deserialize(messageAccumulator, SerializerContext.Default.AISEvent);
                         if (message != null && (message.IsSupported || IncludeUnsupportedEvents))
                         {
                             await _messagePipeline.Writer.WriteAsync(message, CancellationToken.None);
