@@ -108,21 +108,23 @@ public partial class AISEventReceiver : IDisposable
 
         if (_webSocket.State != WebSocketState.Open)
         {
-            _logger?.LogDebug("Performing websocket connection to {Url}", WebsocketUrl);
-            await _webSocket.ConnectAsync(WebsocketUrl, _invoker, cancellationToken);
-
             _readTaskCancellation?.Cancel();
             _readTaskCancellation?.Dispose();
             _readTaskCancellation = new CancellationTokenSource();
 
-            // start read task if one is not already running (as sometimes the read loop will invoke a reconnection)
-            if (_readTask?.Status != TaskStatus.Running)
+            if (_readTask?.Status == TaskStatus.Running)
             {
-                _logger?.LogDebug("Starting websocket read loop");
-
-                _readTask?.Dispose();
-                _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
+                _logger?.LogInformation("Waiting for old read loop to quit...");
+                await _readTask.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
+            
+            _logger?.LogDebug("Performing websocket connection to {Url}", WebsocketUrl);
+            await _webSocket.ConnectAsync(WebsocketUrl, _invoker, cancellationToken);
+
+            _logger?.LogDebug("Starting websocket read loop");
+
+            _readTask?.Dispose();
+            _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
         }
 
         var req = AISAuthenticatedSubscriptionRequest.CreateAuthenticatedRequest(request, _apiKey);
@@ -164,11 +166,10 @@ public partial class AISEventReceiver : IDisposable
                     if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
                     {
                         _logger?.LogDebug("Attempting to reconnect after WebSocketException");
-                        await InternalConnectAsync(_lastSubscriptionRequest, cancellation);
-                        continue;
+                        _ = InternalConnectAsync(_lastSubscriptionRequest, cancellation);
                     }
 
-                    return;
+                    break;
                 }
                 catch (OperationCanceledException)
                 {
@@ -188,9 +189,9 @@ public partial class AISEventReceiver : IDisposable
                     if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
                     {
                         _logger?.LogDebug("WebSocket closed by remote, attempting to reconnect");
-                        await InternalConnectAsync(_lastSubscriptionRequest, cancellation);
-
-                        continue;
+                        _ = InternalConnectAsync(_lastSubscriptionRequest, cancellation);
+                        
+                        break;
                     }
 
                     _logger?.LogDebug("WebSocket closed by remote, unable to perform a reconnection");
