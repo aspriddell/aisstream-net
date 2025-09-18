@@ -22,9 +22,8 @@ public partial class AISEventReceiver : IDisposable
     private readonly HttpMessageInvoker _invoker;
     private readonly Channel<AISEvent> _messagePipeline;
 
-    private Task? _readTask;
     private ClientWebSocket? _webSocket;
-    private CancellationTokenSource? _readTaskCancellation;
+    private CancellationTokenSource? _readLoopCancellation;
 
     private AISSubscriptionRequest? _lastSubscriptionRequest;
 
@@ -84,8 +83,8 @@ public partial class AISEventReceiver : IDisposable
             return;
         }
 
+        _readLoopCancellation?.Cancel();
         await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnect", CancellationToken.None);
-        await _readTaskCancellation!.CancelAsync();
     }
 
     private async Task InternalConnectAsync(AISSubscriptionRequest request, CancellationToken cancellationToken)
@@ -100,31 +99,22 @@ public partial class AISEventReceiver : IDisposable
             throw new Exception("The underlying websocket is currently closing.");
         }
 
-        if (_webSocket?.State is null or WebSocketState.Closed or WebSocketState.Aborted)
+        if (_webSocket?.State != WebSocketState.Open)
         {
+            _logger?.LogDebug("Performing websocket connection to {Url}", WebsocketUrl);
+
             _webSocket?.Dispose();
             _webSocket = new ClientWebSocket();
-        }
 
-        if (_webSocket.State != WebSocketState.Open)
-        {
-            _readTaskCancellation?.Cancel();
-            _readTaskCancellation?.Dispose();
-            _readTaskCancellation = new CancellationTokenSource();
-
-            if (_readTask?.Status == TaskStatus.Running)
-            {
-                _logger?.LogInformation("Waiting for old read loop to quit...");
-                await _readTask.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            }
-            
-            _logger?.LogDebug("Performing websocket connection to {Url}", WebsocketUrl);
             await _webSocket.ConnectAsync(WebsocketUrl, _invoker, cancellationToken);
+
+            _readLoopCancellation?.Cancel();
+            _readLoopCancellation?.Dispose();
+            _readLoopCancellation = new CancellationTokenSource();
 
             _logger?.LogDebug("Starting websocket read loop");
 
-            _readTask?.Dispose();
-            _readTask = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readTaskCancellation.Token), TaskCreationOptions.LongRunning);
+            _ = Task.Factory.StartNew(() => AsyncMessageLoop(_webSocket, _readLoopCancellation.Token), TaskCreationOptions.LongRunning);
         }
 
         var req = AISAuthenticatedSubscriptionRequest.CreateAuthenticatedRequest(request, _apiKey);
@@ -154,18 +144,15 @@ public partial class AISEventReceiver : IDisposable
                 }
                 catch (WebSocketException e)
                 {
-                    _logger?.LogDebug(e, "WebSocketException in read loop: {Message}", e.Message);
-
                     // rethrow for any non-transient errors we can't resolve by reconnecting
                     if (e.WebSocketErrorCode is WebSocketError.HeaderError or WebSocketError.InvalidMessageType or WebSocketError.NotAWebSocket or WebSocketError.UnsupportedProtocol or WebSocketError.UnsupportedVersion)
                     {
-                        _logger?.LogError(e, "Non-recoverable WebSocketException in read loop: {Message}", e.Message);
                         throw;
                     }
 
                     if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
                     {
-                        _logger?.LogDebug("Attempting to reconnect after WebSocketException");
+                        _logger?.LogDebug("Attempting to reconnect due to WebSocketException: {Message}", e.Message);
                         _ = InternalConnectAsync(_lastSubscriptionRequest, cancellation);
                     }
 
@@ -185,7 +172,7 @@ public partial class AISEventReceiver : IDisposable
                 {
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
 
-                    // user didn't ask for a disconnect, try reconnecting (and reuse this task)
+                    // user didn't ask for a disconnect, try reconnecting
                     if (!cancellation.IsCancellationRequested && _lastSubscriptionRequest != null)
                     {
                         _logger?.LogDebug("WebSocket closed by remote, attempting to reconnect");
@@ -228,7 +215,12 @@ public partial class AISEventReceiver : IDisposable
                 // write next block, then see if that was the end of the message
                 messageAccumulator.Write(buffer.AsSpan(0, result.Count));
 
-                if (result.EndOfMessage)
+                if (!result.EndOfMessage)
+                {
+                    continue;
+                }
+                
+                using (messageAccumulator) // won't get used after this
                 {
                     messageAccumulator.Seek(0, SeekOrigin.Begin);
 
@@ -245,11 +237,9 @@ public partial class AISEventReceiver : IDisposable
                         _logger?.LogError(e, "Failed to deserialize incoming message: {Message}", e.Message);
                         _logger?.LogDebug("Message content: {Content}", Encoding.UTF8.GetString(messageAccumulator.ToArray()));
                     }
-                
-
-                    messageAccumulator.Dispose();
-                    messageAccumulator = null;
                 }
+
+                messageAccumulator = null;
             }
         }
         finally
@@ -268,14 +258,9 @@ public partial class AISEventReceiver : IDisposable
             return;
         }
 
-        _readTaskCancellation?.Cancel();
-        _readTaskCancellation?.Dispose();
-
-        _readTask?.Wait();
-        _messagePipeline.Writer.Complete();
-
         _invoker.Dispose();
         _webSocket?.Dispose();
+        _messagePipeline.Writer.Complete();
 
         _disposed = true;
     }
