@@ -27,9 +27,9 @@
 
     <ItemGroup>
         <PackageReference Include="FastEnum" Version="2.0.5"/>
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.9" />
         <PackageReference Include="Riok.Mapperly" Version="4.2.1" PrivateAssets="all"/>
-        <PackageReference Include="System.Text.Json" Version="9.0.8" />
+        <PackageReference Include="System.Text.Json" Version="9.0.9" />
     </ItemGroup>
 
 </Project>
