@@ -39,7 +39,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
     /// <param name="handler">(optional) custom <see cref="HttpMessageHandler"/> to use with the websocket</param>
     /// <param name="disposeHandler">(optional) if <see cref="handler"/> is set, whether to call <see cref="HttpMessageHandler.Dispose"/> when the current instance is disposed.</param>
     /// <param name="logger">(optional) logger to receive diagnostic messages</param>
-    public AISEventReceiver(string apiKey, UnboundedChannelOptions? options = null, HttpMessageHandler? handler = null, bool disposeHandler = true, ILogger logger = null)
+    public AISEventReceiver(string apiKey, UnboundedChannelOptions? options = null, HttpMessageHandler? handler = null, bool disposeHandler = true, ILogger? logger = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
 
