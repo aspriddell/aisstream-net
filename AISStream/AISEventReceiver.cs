@@ -5,7 +5,6 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 
@@ -21,7 +20,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
     private ClientWebSocket? _webSocket;
     private CancellationTokenSource? _cts;
 
-    private AISSubscriptionRequest? _subscriptionRequest;
+    private AISSubscriptionRequestOptions? _subscriptionRequest;
 
     private volatile bool _isDisconnecting;
 
@@ -42,7 +41,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
     /// <param name="logger">(optional) logger to receive diagnostic messages</param>
     public AISEventReceiver(string apiKey, UnboundedChannelOptions? options = null, HttpMessageHandler? handler = null, bool disposeHandler = true, ILogger logger = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey, nameof(apiKey));
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
 
         _apiKey = apiKey;
         _logger = logger;
@@ -63,7 +62,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
     /// </summary>
     public bool IncludeUnsupportedEvents { get; set; }
 
-    public async Task ConnectAsync(AISSubscriptionRequest options, CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(AISSubscriptionRequestOptions options, CancellationToken cancellationToken = default)
     {
         await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 
@@ -88,8 +87,8 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
 
             _subscriptionRequest = options;
 
-            var req = AISAuthenticatedSubscriptionRequest.CreateAuthenticatedRequest(options, _apiKey);
-            var serializedRequest = JsonSerializer.SerializeToUtf8Bytes(req, AISSerializerContext.Default.AISAuthenticatedSubscriptionRequest);
+            var req = _subscriptionRequest.CreateRequest(_apiKey);
+            var serializedRequest = JsonSerializer.SerializeToUtf8Bytes(req, AISSerializerContext.Default.AISSubscriptionRequestBody);
 
             _logger?.LogDebug("Sending subscription request to AISStream...");
             await _webSocket.SendAsync(serializedRequest, WebSocketMessageType.Binary, WebSocketMessageFlags.EndOfMessage, cancellationToken);
@@ -281,12 +280,4 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
                 resource.Dispose();
         }
     }
-
-    [JsonSerializable(typeof(AISEvent))]
-    [JsonSerializable(typeof(AISMessage))]
-    [JsonSerializable(typeof(AISAuthenticatedSubscriptionRequest))]
-    [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, AllowOutOfOrderMetadataProperties = true)]
-    internal partial class AISSerializerContext : JsonSerializerContext;
-
-
 }
