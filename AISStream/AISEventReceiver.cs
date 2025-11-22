@@ -71,7 +71,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
             if (_webSocket?.State != WebSocketState.Open)
             {
                 _isDisconnecting = false;
-            
+
                 _cts?.Dispose();
                 _webSocket?.Dispose();
 
@@ -80,7 +80,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
 
                 _logger?.LogInformation("Performing websocket connection to {url}", WebsocketUrl);
                 await _webSocket.ConnectAsync(WebsocketUrl, _invoker, cancellationToken).ConfigureAwait(false);
-                
+
                 _logger?.LogDebug("Starting read loop...");
                 _ = Task.Factory.StartNew(() => ReadLoopAsync(_cts.Token), TaskCreationOptions.LongRunning);
             }
@@ -109,7 +109,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
             try
             {
                 var result = await _webSocket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
-                
+
                 // handle close request messages
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
@@ -118,7 +118,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
                     await HandleDisconnectAsync();
                     break;
                 }
-                
+
                 // messages that fit in a single payload
                 if (result.EndOfMessage)
                 {
@@ -133,7 +133,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
                     using var memoryStream = new MemoryStream(tempBuffer, 0, 0, true, true);
 
                     memoryStream.Write(buffer, 0, result.Count);
-                    
+
                     while (!result.EndOfMessage)
                     {
                         result = await _webSocket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
@@ -181,7 +181,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
         {
             return;
         }
-        
+
         const int maxAttempts = 5;
         var attempt = 0;
 
@@ -210,7 +210,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
         {
             return;
         }
-        
+
         try
         {
             _logger?.LogDebug("Sending websocket close message...");
