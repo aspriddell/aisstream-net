@@ -1,0 +1,40 @@
+name: Publish
+
+on:
+  release:
+    types: [ published ]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+          "8.0.x"
+          "9.0.x"
+          "10.0.x"
+
+      - uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Pack (Beta)
+        run: dotnet pack -c Release -o . -p:PackageVersion=${{ github.event.release.tag_name }}-beta
+        if: "github.event.release.prerelease"
+
+      - name: Pack (Stable)
+        run: dotnet pack -c Release -o . -p:PackageVersion=${{ github.event.release.tag_name }}
+        if: "!github.event.release.prerelease"
+
+      - name: Publish
+        run: dotnet nuget push "*.nupkg" -k ${{ steps.login.outputs.NUGET_API_KEY }} --skip-duplicate -s https://api.nuget.org/v3/index.json
