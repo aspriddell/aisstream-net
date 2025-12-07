@@ -10,12 +10,14 @@
 
     <PropertyGroup>
         <Title>AISStream.NET</Title>
-        <PackageId>AISStream.NET</PackageId>
         <Authors>Albie Spriddell</Authors>
+        <Copyright>Copyright 2025 (c) Albie Spriddell</Copyright>
         <Description>A low-memory, high-performance library for receiving events from aisstream.io</Description>
 
-        <PackageTags>aisstream websockets ais vessels positioning</PackageTags>
+        <PackageId>AISStream.NET</PackageId>
+        <PackageReadmeFile>docs/readme.md</PackageReadmeFile>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <PackageTags>aisstream websockets ais vessels positioning</PackageTags>
 
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
@@ -35,6 +37,10 @@
         <PackageReference Include="FastEnum" Version="2.0.6"/>
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
         <PackageReference Include="System.Text.Json" Version="10.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\readme.md" Pack="true" PackagePath="docs" Visible="false"/>
     </ItemGroup>
 
 </Project>
