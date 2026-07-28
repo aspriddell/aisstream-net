@@ -260,6 +260,7 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
         _cts?.Dispose();
         _invoker.Dispose();
         _connectLock.Dispose();
+        _messagePipeline.Writer.TryComplete();
     }
 
     public async ValueTask DisposeAsync()
@@ -269,6 +270,8 @@ public partial class AISEventReceiver : IAsyncDisposable, IDisposable
 
         await CastAndDispose(_invoker);
         await CastAndDispose(_connectLock);
+
+        _messagePipeline.Writer.TryComplete();
 
         return;
 
