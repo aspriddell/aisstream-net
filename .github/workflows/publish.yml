@@ -19,6 +19,7 @@ jobs:
             8.0.x
             9.0.x
             10.0.x
+            11.0.x
 
       - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
         id: login
@@ -27,13 +28,16 @@ jobs:
 
       - name: Restore
         run: dotnet restore
+        
+      - name: Build
+        run: dotnet build -c Release -p:Version=${{ github.event.release.tag_name }} -p:ContinuousIntegrationBuild=true
 
       - name: Pack (Beta)
-        run: dotnet pack -c Release -o . -p:PackageVersion=${{ github.event.release.tag_name }}-beta
+        run: dotnet pack --no-build -c Release -o . -p:PackageVersion=${{ github.event.release.tag_name }}-beta
         if: "github.event.release.prerelease"
 
       - name: Pack (Stable)
-        run: dotnet pack -c Release -o . -p:PackageVersion=${{ github.event.release.tag_name }}
+        run: dotnet pack --no-build -c Release -o . -p:PackageVersion=${{ github.event.release.tag_name }}
         if: "!github.event.release.prerelease"
 
       - name: Publish
